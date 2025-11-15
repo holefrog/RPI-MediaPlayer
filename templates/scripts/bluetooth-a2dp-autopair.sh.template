@@ -1,0 +1,283 @@
+#!/bin/bash
+# 蓝牙 A2DP 自动配对与音频路由脚本
+#
+# 功能:
+# - start (默认): 启动持久服务，运行自动配对并监控音频路由
+# - diagnose:     运行蓝牙音频诊断
+#
+set -euo pipefail
+
+# 确保在 root 用户下也能找到用户的 D-Bus/PipeWire
+USER_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/{{USER_ID}}}"
+export XDG_RUNTIME_DIR="$USER_RUNTIME_DIR"
+
+# ----------------------------------------
+# 音量常量
+# ----------------------------------------
+# 硬件音量 (WM8960)
+readonly HARDWARE_VOLUME="90%"
+# 蓝牙 Sink 的初始音量
+readonly INITIAL_SINK_VOLUME="60%"
+
+log() {
+    echo "$(date '+%F %T') [BT-Pair-Router] $*"
+}
+
+# ----------------------------------------
+# 帮助函数
+# ----------------------------------------
+
+# 等待 PipeWire 就绪
+wait_pipewire() {
+    local timeout=30
+    local waited=0
+    
+    while ! pactl info >/dev/null 2>&1; do
+        if [[ $waited -ge $timeout ]]; then
+            log "ERROR: PipeWire 未就绪"
+            return 1
+        fi
+        sleep 1
+        waited=$((waited + 1))
+    done
+    return 0
+}
+
+# 配置蓝牙 sink（自动路由核心）
+configure_bluetooth_sink() {
+    local bluez_sink
+    bluez_sink=$(pactl list sinks short | grep "bluez_sink" | awk '{print $2}' | head -1)
+    
+    if [[ -z "$bluez_sink" ]]; then
+        return 1
+    fi
+    
+    log "发现蓝牙 Sink: $bluez_sink"
+    
+    # 1. 设置为默认 sink
+    if pactl set-default-sink "$bluez_sink" 2>/dev/null; then
+        log "✓ 已设置为默认 Sink"
+    fi
+    
+    # 2. 设置初始音量 (60%)
+    if pactl set-sink-volume "$bluez_sink" $INITIAL_SINK_VOLUME 2>/dev/null; then
+        log "✓ 初始 Sink 音量已设置为 $INITIAL_SINK_VOLUME"
+    fi
+    
+    # 3. 取消静音
+    if pactl set-sink-mute "$bluez_sink" 0 2>/dev/null; then
+        log "✓ 已取消静音"
+    fi
+    
+    # 4. 确保 WM8960 音量为 (90%)
+    local card
+    card=$(aplay -l | grep wm8960soundcard | awk '{print $2}' | tr -d ':' | head -1)
+    
+    if [[ -n "$card" ]]; then
+        if amixer -c "$card" sset 'Speaker' $HARDWARE_VOLUME >/dev/null 2>&1; then
+            log "✓ WM8960 硬件音量已设置为 $HARDWARE_VOLUME"
+        fi
+    fi
+    
+    return 0
+}
+
+# ----------------------------------------
+# 模式: 1. 启动服务 (start)
+# ----------------------------------------
+run_start() {
+    log "=========================================="
+    log "🚀 蓝牙自动配对与音频路由服务启动"
+    log "=========================================="
+    
+    # --- 1. 运行原有的自动配对逻辑 ---
+    log "配置蓝牙控制器..."
+    {
+        sleep 1
+        echo "power on"
+        sleep 1
+        echo "discoverable on"
+        sleep 1
+        echo "pairable on"
+        sleep 1
+        echo "agent NoInputNoOutput"
+        sleep 1
+        echo "default-agent"
+        sleep 1
+        echo "system-alias '{{BLUETOOTH_NAME}}'"
+        sleep 1
+        echo "quit"
+    } | bluetoothctl || log "WARN: bluetoothctl 配置部分失败"
+    log "✓ 蓝牙控制器配置完成"
+
+    # --- 2. 运行音频路由监控 ---
+    log "等待 PipeWire..."
+    if ! wait_pipewire; then
+        log "ERROR: PipeWire 未就绪，退出监控"
+        exit 1
+    fi
+    
+    log "✓ PipeWire 已就绪"
+    log "开始监控蓝牙音频设备..."
+    log ""
+    
+    # 监控 PipeWire sink 变化
+    pactl subscribe 2>/dev/null | while read -r event; do
+        
+        # 关键修复：只在 'new' (新) sink 事件时触发
+        if echo "$event" | grep -qE "new.*sink"; then
+            log "检测到 NEW Sink: $event"
+            
+            # 延迟 2 秒等待设备完全初始化
+            sleep 2
+            
+            # 尝试配置蓝牙 sink
+            if configure_bluetooth_sink; then
+                log "✓ 蓝牙音频路由配置完成"
+            fi
+        fi
+    done
+}
+
+# ----------------------------------------
+# 模式: 2. 诊断 (diagnose)
+# ----------------------------------------
+run_diagnose() {
+    echo "=========================================="
+    echo "  蓝牙音频诊断工具"
+    echo "=========================================="
+    echo ""
+
+    # 1. 检查蓝牙服务
+    echo "1. 蓝牙服务状态:"
+    if systemctl is-active bluetooth >/dev/null 2>&1; then
+        echo "  ✓ bluetooth.service: 运行中"
+    else
+        echo "  ✗ bluetooth.service: 未运行"
+    fi
+    if systemctl is-active bluetooth-a2dp-autopair >/dev/null 2>&1; then
+        echo "  ✓ bluetooth-a2dp-autopair.service: 运行中 (OK)"
+    else
+        echo "  ✗ bluetooth-a2dp-autopair.service: 未运行 (ERROR)"
+    fi
+    echo ""
+
+    # 2. 检查已连接设备
+    echo "2. 已连接的蓝牙设备:"
+    bluetoothctl devices Connected | while read -r line; do
+        mac=$(echo "$line" | awk '{print $2}')
+        name=$(echo "$line" | awk '{$1=$2=""; print $0}' | xargs)
+        
+        echo "  - $name ($mac)"
+        
+        # 显示连接的 profile
+        info=$(bluetoothctl info "$mac")
+        if echo "$info" | grep -q "Connected: yes"; then
+            echo "    状态: 已连接"
+            echo "$info" | grep "UUID:" | grep -E "Audio|A2DP|Headset" | sed 's/^/    /'
+        fi
+    done
+    echo ""
+
+    # 3. 检查 PipeWire sinks
+    echo "3. PipeWire 音频 Sinks:"
+    pactl list sinks short | while read -r line; do
+        sink_id=$(echo "$line" | awk '{print $1}')
+        sink_name=$(echo "$line" | awk '{print $2}')
+        
+        if echo "$sink_name" | grep -q "bluez"; then
+            echo "  🔵 蓝牙 Sink: $sink_name"
+            
+            # 显示音量
+            vol=$(pactl get-sink-volume "$sink_id" 2>/dev/null | awk '{print $5}' || echo "N/A")
+            mute=$(pactl get-sink-mute "$sink_id" 2>/dev/null | awk '{print $2}' || echo "N/A")
+            
+            echo "    音量: $vol (初始 60%, 之后由手机控制)"
+            echo "    静音: $mute"
+            
+            # 检查是否为默认 sink
+            default_sink=$(pactl get-default-sink 2>/dev/null || echo "N/A")
+            if [[ "$sink_name" == "$default_sink" ]]; then
+                echo "    ✓ 默认输出设备"
+            else
+                echo "    ⚠️ 非默认设备（可能导致无声）"
+                echo "    修复命令: pactl set-default-sink $sink_name"
+            fi
+        else
+            echo "  - $sink_name"
+        fi
+    done
+    echo ""
+
+    # 4. 检查蓝牙音频流
+    echo "4. 活跃的音频流:"
+    pactl list sink-inputs | grep -E "Sink Input|application.name|State" | sed 's/^/  /'
+    echo ""
+
+    # 5. 检查 WirePlumber 配置
+    echo "5. WirePlumber 蓝牙配置:"
+    if [[ -f "{{USER_HOME}}/.config/wireplumber/wireplumber.conf.d/51-bluetooth-fix.conf" ]]; then
+        echo "  ✓ 蓝牙音频路由配置已加载 (hw-volume 启用)"
+    else
+        echo "  ✗ 蓝牙音频路由配置缺失 (请重新运行 08-bluetooth.sh)"
+    fi
+    echo ""
+
+    # 6. 检查 WM8960 音量
+    echo "6. WM8960 硬件音量:"
+    CARD=$(aplay -l | grep wm8960soundcard | awk '{print $2}' | tr -d ':' | head -1)
+    if [[ -n "$CARD" ]]; then
+        amixer -c "$CARD" sget 'Speaker' | grep -E "Mono:|Front" | sed 's/^/  /'
+    else
+        echo "  ✗ WM8960 声卡未找到"
+    fi
+    echo ""
+
+    # 7. 快速修复建议
+    echo "=========================================="
+    echo "  快速修复命令"
+    echo "=========================================="
+    echo ""
+    echo "如果安卓设备连接后无声，尝试："
+    echo ""
+    echo "# 1. 设置蓝牙 sink 为默认输出"
+    echo "pactl set-default-sink \$(pactl list sinks short | grep bluez | awk '{print \$2}')"
+    echo ""
+    echo "# 2. 取消静音"
+    echo "pactl set-sink-mute \$(pactl list sinks short | grep bluez | awk '{print \$2}') 0"
+    echo ""
+    echo "# 3. 重启路由服务"
+    echo "systemctl restart bluetooth-a2dp-autopair"
+    echo ""
+}
+
+# ----------------------------------------
+# 主路由
+# ----------------------------------------
+main() {
+    case "${1:-start}" in
+        start)
+            run_start
+            ;;
+        diagnose)
+            run_diagnose
+            ;;
+        *)
+            echo "未知命令: $1"
+            echo "用法: $0 [start|diagnose]"
+            exit 1
+            ;;
+    esac
+}
+
+# 信号处理
+cleanup() {
+    log ""
+    log "🛑 收到退出信号，服务退出"
+    exit 0
+}
+
+trap cleanup SIGTERM SIGINT
+
+# 启动
+main "$@"
