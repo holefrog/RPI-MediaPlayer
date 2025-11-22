@@ -1,0 +1,196 @@
+#!/bin/bash
+# 音量控制脚本 - WM8960 优化版（可配置）
+# 生成自: templates/scripts/volume.sh.template
+
+set -euo pipefail
+
+# ============================================
+# 环境设置
+# ============================================
+RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+export XDG_RUNTIME_DIR="$RUNTIME_DIR"
+
+# 从模板变量读取音量配置
+readonly DEFAULT_HW_VOLUME="{{DEFAULT_HW_VOLUME}}%"
+readonly DEFAULT_SINK_VOLUME="{{DEFAULT_SINK_VOLUME}}%"
+
+# ============================================
+# 统一日志函数
+# ============================================
+log() {
+    echo "[$(date '+%H:%M:%S')] [Volume] [INFO] $*"
+}
+
+error() {
+    echo "[$(date '+%H:%M:%S')] [Volume] [ERROR] $*" >&2
+    exit 1
+}
+
+# ============================================
+# 动态查找 WM8960 设备
+# ============================================
+find_wm8960_sink() {
+    # 添加 || true 防止 grep 失败导致脚本因 set -e 立即退出
+    pactl list short sinks | grep -E "wm8960|soc_sound" | awk '{print $2}' | head -1 || true
+}
+
+# ============================================
+# WM8960 音频卡初始化
+# ============================================
+init_wm8960() {
+    log "初始化 WM8960 音频配置..."
+    
+    # 1. 动态查找 WM8960 sink (添加重试机制)
+    log "查找 WM8960 音频设备..."
+    local WM8960_SINK=""
+    local count=0
+    local max_retries=15  # 最多等待 15 秒
+    
+    while [ $count -lt $max_retries ]; do
+        WM8960_SINK=$(find_wm8960_sink)
+        
+        if [ -n "$WM8960_SINK" ]; then
+            break
+        fi
+        
+        log "等待硬件设备挂载 ($((count+1))/$max_retries)..."
+        sleep 1
+        count=$((count+1))
+    done
+    
+    if [ -z "$WM8960_SINK" ]; then
+        error "超时：PipeWire 已就绪，但未检测到 WM8960 硬件设备 (已尝试 $max_retries 次)"
+    fi
+    
+    log "✓ 找到 WM8960 设备: $WM8960_SINK"
+    
+    # 2. 设置 PipeWire 默认 sink（重试 10 次）
+    log "设置 PipeWire 默认 sink..."
+    for i in {1..10}; do
+        if pactl set-default-sink "$WM8960_SINK" 2>/dev/null; then
+            log "✓ 默认 sink 设置为 $WM8960_SINK"
+            break
+        fi
+        if [ $i -eq 10 ]; then
+            error "无法设置默认 sink 到 WM8960（尝试 10 次失败）"
+        fi
+        sleep 1
+    done
+    
+    # 3. 设置 PipeWire sink 音量
+    log "设置 PipeWire sink 音量..."
+    if ! pactl set-sink-volume "$WM8960_SINK" "$DEFAULT_SINK_VOLUME"; then
+        error "无法设置 PipeWire sink 音量"
+    fi
+    log "✓ PipeWire sink 音量已设置为 $DEFAULT_SINK_VOLUME"
+    
+    # 4. 禁用其他 sink
+    log "禁用其他 sink..."
+    local other_sinks
+    other_sinks=$(pactl list short sinks | awk '{print $2}' | grep -v "$WM8960_SINK" || true)
+
+    if [ -n "$other_sinks" ]; then
+        echo "$other_sinks" | while read -r sink; do
+            pactl set-sink-volume "$sink" 0% 2>/dev/null || true
+            pactl suspend-sink "$sink" 1 2>/dev/null || true
+            log " 已禁用: $sink"
+        done
+    else
+        log " 无其他 sink 可禁用"
+    fi
+
+    # 5. 设置 ALSA 硬件音量
+    log "设置 ALSA 硬件音量..."
+    local CARD
+    # 同样增加 || true 保护 grep
+    CARD=$(aplay -l | grep -i wm8960 | awk '{print $2}' | tr -d ':' | head -1 || true)
+    
+    if [ -z "$CARD" ]; then
+        error "未找到 WM8960 音频卡 (ALSA)"
+    fi
+    
+    # 设置所有音量控制到指定值
+    amixer -c "$CARD" sset 'Speaker' "$DEFAULT_HW_VOLUME" >/dev/null 2>&1 || true
+    amixer -c "$CARD" sset 'Playback' "$DEFAULT_HW_VOLUME" >/dev/null 2>&1 || true
+    amixer -c "$CARD" sset 'Left Output Mixer PCM' on >/dev/null 2>&1 || true
+    amixer -c "$CARD" sset 'Right Output Mixer PCM' on >/dev/null 2>&1 || true
+    amixer -c "$CARD" sset 'PCM Playback -6dB' off >/dev/null 2>&1 || true
+    amixer -c "$CARD" sset 'Speaker Playback Volume' "$DEFAULT_HW_VOLUME" >/dev/null 2>&1 || true
+    amixer -c "$CARD" sset 'PCM Playback Volume' "$DEFAULT_HW_VOLUME" >/dev/null 2>&1 || true
+    amixer -c "$CARD" sset 'Output Gain' "$DEFAULT_HW_VOLUME" >/dev/null 2>&1 || true
+    amixer -c "$CARD" sset 'PCM Gain' "$DEFAULT_HW_VOLUME" >/dev/null 2>&1 || true
+    
+    log "✓ ALSA 硬件音量已设置为 $DEFAULT_HW_VOLUME"
+    
+    # 6. 输出诊断信息
+    log "当前 sink 状态:"
+    pactl list sinks | grep -E 'Name|Volume|Active Port' 2>&1 | sed 's/^/  /'
+}
+
+# ============================================
+# 音量控制函数
+# ============================================
+set_volume() {
+    local vol="$1"
+    if ! pactl set-sink-volume @DEFAULT_SINK@ "$vol"; then
+        error "无法设置音量"
+    fi
+}
+
+get_volume() {
+    pactl get-sink-volume @DEFAULT_SINK@ | awk '{print $5}' | tr -d '%'
+}
+
+toggle_mute() {
+    pactl set-sink-mute @DEFAULT_SINK@ toggle
+}
+
+# ============================================
+# 主逻辑
+# ============================================
+case "${1:-}" in
+    init)
+        init_wm8960
+        ;;
+    up)
+        set_volume +5%
+        log "音量提高: $(get_volume)%"
+        ;;
+    down)
+        set_volume -5%
+        log "音量降低: $(get_volume)%"
+        ;;
+    set)
+        if [[ -z "${2:-}" ]]; then
+            echo "用法: $0 set <0-100>" >&2
+            exit 1
+        fi
+        set_volume "${2}%"
+        log "音量设置: ${2}%"
+        ;;
+    get)
+        get_volume
+        ;;
+    mute)
+        toggle_mute
+        log "静音切换"
+        ;;
+    status)
+        log "当前音量: $(get_volume)%"
+        log "当前 sink 状态:"
+        pactl list sinks | grep -E 'Name|Volume|Mute|Active Port' 2>&1 | sed 's/^/  /'
+        ;;
+    *)
+        echo "用法: $0 {init|up|down|set <0-100>|get|mute|status}"
+        echo ""
+        echo "命令说明:"
+        echo "  init         - 初始化 WM8960 音频配置（设置默认 sink 和硬件音量）"
+        echo "  up           - 音量提高 5%"
+        echo "  down         - 音量降低 5%"
+        echo "  set <0-100>  - 设置音量到指定值"
+        echo "  get          - 获取当前音量"
+        echo "  mute         - 静音/取消静音切换"
+        echo "  status       - 显示当前音量和 sink 状态"
+        exit 1
+        ;;
+esac

@@ -1,0 +1,17 @@
+[Unit]
+Description=Squeezelite Music Player
+Documentation=man:squeezelite(1)
+After=pipewire.service pipewire-pulse.service network-online.target sound.target
+Wants=network-online.target
+Requires=pipewire-pulse.service
+
+[Service]
+Type=simple
+ExecStart={{SYSTEM_BIN_DIR}}/squeezelite.sh
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target

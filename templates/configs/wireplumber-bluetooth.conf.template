@@ -1,0 +1,28 @@
+# WirePlumber 蓝牙音频路由修复配置
+monitor.bluez.properties = {
+  bluez5.enable-hw-volume = true
+  
+  # 蓝牙角色配置
+  bluez5.roles = [ a2dp_sink ]
+  
+  # 支持的编解码器
+  bluez5.codecs = [ sbc sbc_xq aac ldac aptx aptx_hd aptx_ll faststream ]
+  bluez5.enable-sbc-xq = true
+  bluez5.enable-msbc = true
+}
+
+monitor.bluez.rules = [
+  {
+    matches = [ { device.name = "~bluez_card.*" } ]
+    actions = {
+      update-props = {
+        bluez5.auto-connect = [ a2dp_sink ]
+        device.profile = "a2dp-sink"
+        priority.driver = 1000
+        priority.session = 1000
+        node.pause-on-idle = false
+        session.suspend-timeout-seconds = 0
+      }
+    }
+  }
+]
