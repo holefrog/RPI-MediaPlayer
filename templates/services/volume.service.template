@@ -1,0 +1,36 @@
+[Unit]
+Description=Set WM8960 and PipeWire Volume
+Documentation=man:pactl(1)
+After=pipewire.service pipewire-pulse.service wireplumber.service
+Wants=pipewire.service pipewire-pulse.service wireplumber.service
+
+[Service]
+Type=oneshot
+Environment="XDG_RUNTIME_DIR={{USER_RUNTIME_DIR}}"
+
+# [基础设施层] 等待 PipeWire 就绪（最多 30 秒）
+# 职责：确保音频守护进程已启动，这是运行 volume.sh 的前提条件
+ExecStartPre=/bin/bash -c 'for i in {1..30}; do \
+    if pactl info >/dev/null 2>&1; then \
+        echo "PipeWire is ready"; \
+        exit 0; \
+    fi; \
+    echo "Waiting for PipeWire ($i/30)..."; \
+    sleep 1; \
+done; \
+echo "ERROR: PipeWire failed to start after 30 seconds" >&2; \
+exit 1'
+
+# [业务逻辑层] 初始化 WM8960 音量配置
+# 具体的硬件等待逻辑在脚本内部处理
+ExecStart={{SYSTEM_BIN_DIR}}/volume.sh init
+
+# 服务保持活动状态（不会在启动后退出）
+RemainAfterExit=yes
+
+# 输出到日志
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target

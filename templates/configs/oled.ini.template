@@ -1,0 +1,44 @@
+# ============================================
+# OLED 显示服务完整配置文件
+# ============================================
+[SERVER]
+HOST_IP = {{LMS_SERVER_IP}}
+HOST_Port = {{LMS_SERVER_PORT}}
+PLAYER_ID={{PLAYER_ID}}
+
+
+[OLED]
+# 硬件配置
+bus = {{OLED_BUS}}
+address = {{OLED_ADDR}}
+width = {{OLED_WIDTH}}
+height = {{OLED_HEIGHT}}
+
+# 🆕 日志级别 (DEBUG, INFO, WARNING, ERROR, CRITICAL)
+log_level = INFO
+
+
+[DISPLAY]
+# 字体配置
+font_path = ./msyh.ttf
+font_small_size = 14
+font_large_size = 22
+
+# 亮度配置 (0-255)
+default_brightness = 255
+dim_brightness = 8
+
+# 滚动配置
+scroll_step = 2              
+scroll_speed_playing = 0.004 
+scroll_speed_static = 0.02   
+
+[SCREENSAVER]
+dim_timeout = 5    
+off_timeout = 900  
+
+[VOLUME]
+popup_duration = 2.5
+
+[AIRPLAY]
+metadata_pipe = {{METADATA_PIPE}}

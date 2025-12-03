@@ -1,0 +1,202 @@
+#!/bin/bash
+# bluetooth-a2dp-autopair.sh - 树莓派 A2DP 蓝牙音箱自动配对服务
+# 生成自: templates/scripts/bluetooth-a2dp-autopair.sh.template
+# 修复版：使用配置化超时参数
+
+set -euo pipefail
+
+# ============================================
+# 配置参数
+# ============================================
+BT_NAME="{{BT_NAME}}"
+USER_NAME="{{USER_NAME}}"
+PINS_FILE="{{PINS_FILE}}"
+USER_RUNTIME_DIR="{{USER_RUNTIME_DIR}}"
+CHECK_INTERVAL={{CHECK_INTERVAL}}
+
+# 🆕 配置化超时参数
+BT_INIT_DELAY={{BT_INIT_DELAY}}
+BT_RFKILL_DELAY={{BT_RFKILL_DELAY}}
+
+# ============================================
+# 统一日志函数
+# ============================================
+log() {
+    echo "[$(date '+%H:%M:%S')] [BT-AutoPair] [INFO] $*"
+}
+
+warn() {
+    echo "[$(date '+%H:%M:%S')] [BT-AutoPair] [WARN] $*" >&2
+}
+
+error() {
+    echo "[$(date '+%H:%M:%S')] [BT-AutoPair] [ERROR] $*" >&2
+}
+
+# ============================================
+# 辅助函数：以正确用户身份运行 pactl
+# ============================================
+run_pactl() {
+    sudo -u "$USER_NAME" XDG_RUNTIME_DIR="$USER_RUNTIME_DIR" pactl "$@"
+}
+
+# ============================================
+# 初始化蓝牙
+# ============================================
+initialize_bluetooth() {
+    log "🔄 初始化蓝牙用于 A2DP"
+    
+    # 解锁蓝牙 (需要 root 权限)
+    sudo rfkill unblock bluetooth
+    
+    # 🆕 使用配置化延迟
+    sleep "$BT_RFKILL_DELAY"
+    
+    # 配置蓝牙
+    bluetoothctl power on
+    bluetoothctl system-alias "$BT_NAME"
+    bluetoothctl discoverable on
+    bluetoothctl pairable on
+    bluetoothctl discoverable-timeout 0
+    
+    if [ "$?" -ne 0 ]; then
+        error "❌ 蓝牙初始化失败"
+        return 1
+    fi
+    
+    log "📡 初始化完成"
+    bluetoothctl show | \
+        grep -E 'Powered|Discoverable|Pairable' | \
+        sed 's/^/    /' | \
+        while read -r line; do
+            log "$line"
+        done
+    
+    # 确保 PipeWire 蓝牙模块加载
+    run_pactl load-module module-bluez5-device 2>/dev/null || \
+        warn "⚠️ 蓝牙音频模块已加载或加载失败（可忽略）"
+    
+    return 0
+}
+
+# ============================================
+# 检查是否有活跃的蓝牙音频连接
+# ============================================
+has_active_connection() {
+    if run_pactl list sinks short | grep -q "bluez_sink"; then
+        local sink_name
+        sink_name=$(run_pactl list sinks short | grep bluez_sink | awk '{print $2}' | head -1)
+        
+        # 设置为默认输出
+        run_pactl set-default-sink "$sink_name" 2>/dev/null || true
+        
+        log "🔊 蓝牙设备已连接: $sink_name"
+        return 0
+    fi
+    
+    return 1
+}
+
+# ============================================
+# 主函数
+# ============================================
+main() {
+    log "=========================================="
+    log "🚀 蓝牙 A2DP 自动配对服务启动"
+    log "=========================================="
+    log "设备名称: $BT_NAME"
+    log "运行用户: $USER_NAME"
+    log "PIN 文件: $PINS_FILE"
+    log "检查间隔: ${CHECK_INTERVAL}秒"
+    log "初始化延迟: ${BT_INIT_DELAY}秒"
+    log "Rfkill 延迟: ${BT_RFKILL_DELAY}秒"
+    log ""
+    
+    # 初始化蓝牙
+    initialize_bluetooth || {
+        error "❌ 蓝牙初始化失败，5秒后重试..."
+        sleep 5
+        exit 1
+    }
+    
+    # 启动 bt-agent
+    log "🔄 启动 bt-agent 代理（NoInputNoOutput 模式）"
+    bt-agent -c NoInputNoOutput -p "$PINS_FILE" &
+    AGENT_PID=$!
+    log "✓ bt-agent 已启动 (PID: $AGENT_PID)"
+    
+    # 主循环
+    log "🔁 进入监控循环..."
+    log ""
+    
+    CHECK_COUNT=0
+    
+    while true; do
+        # 确保蓝牙未被阻止
+        sudo rfkill unblock bluetooth 2>/dev/null || true
+        
+        # 🆕 使用配置化延迟
+        sleep "$BT_RFKILL_DELAY"
+        
+        # 检查 bt-agent 是否还在运行
+        if ! ps -p "$AGENT_PID" > /dev/null 2>&1; then
+            warn "⚠️ bt-agent 进程已退出，重新启动"
+            bt-agent -c NoInputNoOutput -p "$PINS_FILE" &
+            AGENT_PID=$!
+            log "✓ bt-agent 已重启 (PID: $AGENT_PID)"
+        fi
+        
+        # 检查是否有活跃连接
+        if has_active_connection; then
+            log "🔵 已有蓝牙设备连接，关闭配对模式"
+            bluetoothctl discoverable off 2>/dev/null || true
+        else
+            log "⚪ 无活跃连接，启用配对模式"
+            bluetoothctl discoverable on 2>/dev/null || true
+            bluetoothctl pairable on 2>/dev/null || true
+            bluetoothctl discoverable-timeout 0 2>/dev/null || true
+            
+            # 尝试重新加载蓝牙模块
+            run_pactl load-module module-bluez5-device 2>/dev/null || true
+        fi
+        
+        # 输出当前状态（每 5 个周期一次详细输出）
+        CHECK_COUNT=$((CHECK_COUNT + 1))
+        if [ $((CHECK_COUNT % 5)) -eq 0 ]; then
+            log "📡 状态检查 #$CHECK_COUNT"
+            bluetoothctl show | \
+                grep -E 'Powered|Discoverable|Pairable' | \
+                sed 's/^/    /' | \
+                while read -r line; do
+                    log " $line"
+                done
+        fi
+        
+        # 等待下一次检查
+        sleep "$CHECK_INTERVAL"
+    done
+}
+
+# ============================================
+# 信号处理（优雅退出）
+# ============================================
+cleanup() {
+    log ""
+    log "🛑 收到退出信号，正在清理..."
+    
+    # 停止 bt-agent
+    if [ -n "${AGENT_PID:-}" ] && ps -p "$AGENT_PID" > /dev/null 2>&1; then
+        log "停止 bt-agent (PID: $AGENT_PID)"
+        kill "$AGENT_PID" 2>/dev/null || true
+    fi
+    
+    log "✓ 清理完成，服务退出"
+    exit 0
+}
+
+trap cleanup SIGTERM SIGINT
+
+# ============================================
+# 启动主函数
+# ============================================
+main
