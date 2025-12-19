@@ -1,0 +1,21 @@
+[Unit]
+Description=OLED 显示服务
+After=network-online.target user@{{USER_ID}}.service
+Wants=network-online.target user@{{USER_ID}}.service
+
+[Service]
+Environment="XDG_RUNTIME_DIR={{USER_RUNTIME_DIR}}"
+Type=simple
+WorkingDirectory={{OLED_APP_DIR}}
+
+# 启动前等待 eth0 准备好（最多 10 秒）
+ExecStartPre=/bin/bash -c 'for i in {1..10}; do [ -e /sys/class/net/eth0/address ] && break; sleep 1; done'
+
+ExecStart={{VENV_PYTHON}} {{OLED_APP_DIR}}/main.py
+Restart=always
+RestartSec=15
+StandardOutput=journal+console
+StandardError=journal+console
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,40 @@
+#!/bin/bash
+# Squeezelite 启动脚本
+# 生成自: templates/scripts/squeezelite.sh.template
+
+set -euo pipefail
+
+# --- 统一日志函数 ---
+log() {
+    echo "[$(date '+%H:%M:%S')] [Squeezelite] [INFO] $*"
+}
+
+err() {
+    echo "[$(date '+%H:%M:%S')] [Squeezelite] [ERROR] $*" >&2
+}
+# ------------------
+
+# 设置运行时目录
+export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+
+# 等待 PipeWire 就绪（最多 {{PIPEWIRE_TIMEOUT}} 秒）
+log "等待 PipeWire..."
+for i in $(seq 1 {{PIPEWIRE_TIMEOUT}}); do
+    if pactl info >/dev/null 2>&1; then
+        log "PipeWire 已就绪"
+        break
+    fi
+    if [ $i -eq {{PIPEWIRE_TIMEOUT}} ]; then
+        err "错误: PipeWire 未就绪"
+        exit 1
+    fi
+    sleep 1
+done
+
+# 启动 Squeezelite
+exec /usr/bin/squeezelite \
+    -n "{{PLAYER_NAME}}" \
+    -s "{{SERVER_IP}}" \
+    -m "{{PLAYER_MAC}}" \
+    -o "{{ALSA_DEVICE}}" \
+    {{EXTRA_ARGS}}

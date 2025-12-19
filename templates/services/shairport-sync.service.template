@@ -1,0 +1,17 @@
+[Unit]
+Description=AirPlay Audio Receiver (Shairport-Sync)
+Documentation=man:shairport-sync(1)
+After=pipewire.service pipewire-pulse.service network-online.target sound.target
+Wants=network-online.target
+Requires=pipewire-pulse.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/shairport-sync -c /etc/shairport-sync/shairport-sync.conf
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target

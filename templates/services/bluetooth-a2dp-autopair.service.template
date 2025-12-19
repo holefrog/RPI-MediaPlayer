@@ -1,0 +1,23 @@
+[Unit]
+Description=Bluetooth A2DP Auto-Pairing Service
+Documentation=man:bluetoothctl(1) man:bt-agent(1)
+After=network.target bluetooth.service pipewire.service user@{{USER_ID}}.service
+Requires=bluetooth.service
+Wants=pipewire.service user@{{USER_ID}}.service
+
+[Service]
+Type=simple
+User=root
+Environment="USER_RUNTIME_DIR={{USER_RUNTIME_DIR}}"
+ExecStart={{SYSTEM_BIN_DIR}}/bluetooth-a2dp-autopair.sh
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+# 安全设置
+NoNewPrivileges=false
+PrivateTmp=false
+
+[Install]
+WantedBy=multi-user.target

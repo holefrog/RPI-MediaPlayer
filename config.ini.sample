@@ -1,0 +1,233 @@
+# ============================================
+# RPI MediaPlayer 配置文件示例
+# RPI MediaPlayer Configuration Sample
+# ============================================
+# 使用说明 / Instructions:
+#   1. 复制此文件为 config.ini
+#      Copy this file to config.ini
+#   2. 根据实际环境修改配置项
+#      Modify settings according to your environment
+#   3. 运行 ./setup.sh 自动部署
+#      Run ./setup.sh for automatic deployment
+# ============================================
+
+# ============================================
+# SSH 连接配置 / SSH Connection Settings
+# ============================================
+[ssh]
+# 树莓派主机名或 IP 地址
+# Raspberry Pi hostname or IP address
+host=rpi.local
+
+# SSH 用户名（推荐创建专用用户）
+# SSH username (recommended to create dedicated user)
+user=player
+
+# SSH 端口（默认 22）
+# SSH port (default 22)
+port=22
+
+# SSH 私钥路径（相对或绝对路径）
+# SSH private key path (relative or absolute)
+key=./rpi_keys/id_rpi
+
+# ============================================
+# 系统配置 / System Settings
+# ============================================
+[system]
+# 时区设置（例如: America/Vancouver, Asia/Shanghai, Europe/London）
+# Timezone (e.g., America/Vancouver, Asia/Shanghai, Europe/London)
+timezone=America/Vancouver
+
+# 系统自动更新（yes/no）
+# Automatic system updates (yes/no)
+auto_update=yes
+
+# ============================================
+# Squeezelite 配置 / Squeezelite Settings
+# ============================================
+[squeezelite]
+# 播放器名称（在 LMS 中显示）
+# Player name (displayed in LMS)
+name=RPI-Squeeze
+
+# Logitech Media Server IP 地址
+# Logitech Media Server IP address
+server=192.168.50.210
+
+# ALSA 设备（default 或具体设备名）
+# ALSA device (default or specific device name)
+device=default
+
+# Squeezelite 启动参数
+# Squeezelite startup arguments
+# 常用参数说明 / Common arguments:
+#   -a 40:4:32:0  - 音频缓冲: 缓冲大小:周期数:采样格式:静音阈值
+#                   Audio buffer: buffer:period:format:mmap
+#   -b 500:5000   - 流缓冲: 输入缓冲:输出缓冲 (KB)
+#                   Stream buffer: stream:output (KB)
+#   -d all=info   - 调试日志级别
+#                   Debug log level
+#   -r 44100-192000 - 支持的采样率范围
+#                     Supported sample rate range
+args=-a 40:4:32:0 -b 500:5000
+
+# ============================================
+# AirPlay 配置 / AirPlay Settings
+# ============================================
+[airplay]
+# AirPlay 设备名称（在 iOS/macOS 中显示）
+# AirPlay device name (displayed in iOS/macOS)
+name=RPI-AirPlay
+
+# AirPlay 服务端口（默认 5000）
+# AirPlay service port (default 5000)
+port=5000
+
+# ALSA 输出设备
+# ALSA output device
+device=default
+
+# 初始音量 (0-100)
+# Initial volume (0-100)
+initial_volume=60
+
+# ============================================
+# 蓝牙配置 / Bluetooth Settings
+# ============================================
+[bluetooth]
+# 蓝牙设备名称（在配对时显示）
+# Bluetooth device name (displayed during pairing)
+name=RPI-Bluetooth
+
+# 自动配对扫描间隔（秒）
+# Auto-pairing scan interval (seconds)
+# 建议值: 10-30 秒
+# Recommended: 10-30 seconds
+check_interval=20
+
+# ============================================
+# WM8960 音频 HAT 配置 / WM8960 Audio HAT Settings
+# ============================================
+[wm8960]
+# I2C 总线编号（通常是 1）
+# I2C bus number (usually 1)
+# 使用 'ls /dev/i2c-*' 查看可用总线
+# Use 'ls /dev/i2c-*' to list available buses
+bus=1
+
+# ============================================
+# OLED 显示屏配置 / OLED Display Settings
+# ============================================
+[oled]
+# 显示屏分辨率
+# Display resolution
+width=128
+height=64
+
+# I2C 总线编号
+# I2C bus number
+# - I2C-1: GPIO2 (SDA) 和 GPIO3 (SCL) - 默认总线
+#          GPIO2 (SDA) and GPIO3 (SCL) - default bus
+# - I2C-3: GPIO4 (SDA) 和 GPIO5 (SCL) - 需要 dtoverlay 配置
+#          GPIO4 (SDA) and GPIO5 (SCL) - requires dtoverlay
+# 使用命令检查 / Check with commands:
+#   ls /dev/i2c-*           - 查看可用总线 / List available buses
+#   i2cdetect -y <bus>      - 扫描设备地址 / Scan device addresses
+bus=3
+
+# I2C GPIO 引脚配置
+# I2C GPIO pin configuration
+sda_pin=4
+scl_pin=5
+
+# I2C 设备地址（十六进制格式）
+# I2C device address (hexadecimal format)
+# 常见值 / Common values: 0x3C 或 0x3D
+# 使用 'i2cdetect -y 3' 查看实际地址
+# Use 'i2cdetect -y 3' to find actual address
+address=0x3C
+
+# 日志级别 / Log level
+# 可选值 / Options: DEBUG, INFO, WARNING, ERROR, CRITICAL
+log_level=INFO
+
+# ============================================
+# 路径配置 / Path Settings
+# ============================================
+[paths]
+# 远程安装目录名（临时文件目录）
+# Remote installation directory (temporary files)
+remote_install_dir=installer
+
+# 应用根目录名
+# Application base directory
+app_base_dir=rpi-mediaplayer
+
+# OLED 虚拟环境路径（相对于应用根目录）
+# OLED virtual environment path (relative to app base)
+oled_venv_dir=.venv/oled
+
+# AirPlay 元数据管道路径
+# AirPlay metadata pipe path
+metadata_pipe=/tmp/shairport-sync-metadata
+
+# ============================================
+# 超时配置 / Timeout Settings (seconds)
+# ============================================
+[timeouts]
+# APT 锁等待超时
+# APT lock wait timeout
+apt_lock=60
+
+# PipeWire 就绪超时
+# PipeWire ready timeout
+pipewire_ready=30
+
+# SSH 连接超时
+# SSH connection timeout
+ssh_connect=10
+
+# 重启等待超时
+# Reboot wait timeout
+reboot_wait=180
+
+# 重启状态轮询间隔
+# Reboot status polling interval
+reboot_poll_interval=5
+
+# 部署脚本初始等待时间
+# Deployment script initial wait time
+deployment_initial_wait=2
+
+# 部署脚本离线等待时间
+# Deployment script offline wait time
+deployment_offline_wait=5
+
+# 蓝牙初始化延迟
+# Bluetooth initialization delay
+bt_init_delay=2
+
+# 蓝牙 rfkill 操作延迟
+# Bluetooth rfkill operation delay
+bt_rfkill_delay=2
+
+# OLED 测试超时（秒）
+# OLED test timeout (seconds)
+oled_test_timeout=25
+
+# ============================================
+# 音频配置 / Audio Settings
+# ============================================
+[audio]
+# ALSA 硬件音量 (0-100)
+# ALSA hardware volume (0-100)
+# 建议值: 90-100 (由软件控制最终音量)
+# Recommended: 90-100 (final volume controlled by software)
+default_hw_volume=95
+
+# PipeWire Sink 默认音量 (0-100)
+# PipeWire Sink default volume (0-100)
+# 建议值: 100 (由应用控制音量)
+# Recommended: 100 (volume controlled by applications)
+default_sink_volume=100
